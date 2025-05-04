@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+groq
+requests
+python-dotenv
+python-multipart
+numpy
