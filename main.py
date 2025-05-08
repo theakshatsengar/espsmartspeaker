@@ -146,7 +146,7 @@ async def process_audio(audio_data: bytes = Body(...)):
         logger.info("Sending request to Groq LLM")
         try:
             # Add current user message to conversation history
-            conversation_history.append({"role": "user", "content": user_text})
+            conversation_history.append({"role": "user", "content": "send email to akshat asking for frontend project details, and ask him to reply to you."})
 
             # Construct messages with system prompt and last N messages
             messages = [
@@ -157,7 +157,11 @@ async def process_audio(audio_data: bytes = Body(...)):
                         "You are a smart speaker assistant. "
                         "Always respond in very short, precise sentences. "
                         "Be clear, friendly, and to-the-point. "
-                        "Avoid long explanations. Act like a helpful AI."
+                        "Avoid long explanations. Act like a helpful AI. "
+                        "When sending emails, ALWAYS use this exact format: "
+                        "@tool_call: send_email_to_contact(contact=\"contact_name\", subject=\"subject\", body=\"message\") "
+                        "or "
+                        "@tool_call: send_email(to=\"email@example.com\", subject=\"subject\", body=\"message\")"
                     )
                 }
             ] + conversation_history[-MAX_HISTORY:]

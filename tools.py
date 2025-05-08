@@ -4,6 +4,7 @@ from email.message import EmailMessage
 from contacts import CONTACTS
 import os
 from dotenv import load_dotenv
+import logging
 
 # Tool registry
 TOOLS = {}
@@ -12,6 +13,16 @@ load_dotenv()
 
 SMTP_USER = os.getenv("SMTP_USER")
 SMTP_PASS = os.getenv("SMTP_PASS")
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('email.log'),
+        logging.StreamHandler()
+    ]
+)
 
 def tool(func):
     """Decorator to register a function as a tool."""
@@ -27,7 +38,7 @@ def get_datetime():
 def send_email(to: str, subject: str, body: str):
     """Send an email using SMTP with SSL."""
     SMTP_SERVER = "smtp.gmail.com"
-    SMTP_PORT = 465  # Changed from 587 to 465 for SSL
+    SMTP_PORT = 465
 
     msg = EmailMessage()
     msg["From"] = SMTP_USER
@@ -36,10 +47,15 @@ def send_email(to: str, subject: str, body: str):
     msg.set_content(body)
     msg["Reply-To"] = SMTP_USER
 
-    with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
-        server.login(SMTP_USER, SMTP_PASS)
-        server.send_message(msg)
-    return f"Email sent to {to}"
+    try:
+        with smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT) as server:
+            server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
+        logging.info(f"Email sent successfully to: {to} | Subject: {subject}")
+        return f"Email sent to {to}"
+    except Exception as e:
+        logging.error(f"Failed to send email to {to}: {str(e)}")
+        raise
 
 @tool
 def send_email_to_contact(contact: str, subject: str, body: str):

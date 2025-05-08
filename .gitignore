@@ -34,16 +34,4 @@ Thumbs.db
 logs/
 *.log
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
 venv/
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db 
