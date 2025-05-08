@@ -146,7 +146,7 @@ async def process_audio(audio_data: bytes = Body(...)):
         logger.info("Sending request to Groq LLM")
         try:
             # Add current user message to conversation history
-            conversation_history.append({"role": "user", "content": "send email to akshat asking for frontend project details, and ask him to reply to you."})
+            conversation_history.append({"role": "user", "content": user_text})
 
             # Construct messages with system prompt and last N messages
             messages = [
