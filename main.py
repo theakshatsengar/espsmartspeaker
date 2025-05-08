@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Body
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -10,6 +10,9 @@ import numpy as np
 import wave
 from groq import Groq
 from logging_config import logger
+from fastapi.responses import Response
+from tools import execute_tool
+
 
 app = FastAPI()
 
@@ -20,7 +23,7 @@ GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 # Init Groq client
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-def pcm8_to_linear16(pcm_data: bytes, sample_rate: int = 16000) -> bytes:
+def pcm8_to_linear16(pcm_data: bytes, sample_rate: int = 16000, bits_per_sample: int = 8) -> bytes:
     """
     Converts unsigned 8-bit PCM to signed 16-bit PCM (LINEAR16).
     Args:
@@ -65,36 +68,40 @@ def linear16_to_pcm8(audio_data: bytes) -> bytes:
         logger.error(f"Error in PCM conversion: {str(e)}", exc_info=True)
         raise
 
+class AudioData(BaseModel):
+    audio: bytes
+
+conversation_history = []  # Global context store
+MAX_HISTORY = 10
+
 @app.post("/process_audio")
-async def process_audio(audio: UploadFile = File(...)):
+async def process_audio(audio_data: bytes = Body(...)):
     try:
-        logger.info(f"Received audio file: {audio.filename} with content type: {audio.content_type}")
+        logger.info("Received audio data")
         
-        # Read the audio file
-        audio_content = await audio.read()
+        # Get the raw audio bytes from the request body
+        audio_content = audio_data
         file_size = len(audio_content)
-        logger.info(f"Audio file size: {file_size} bytes")
+        logger.info(f"Audio data size: {file_size} bytes")
         
         # Validate file size (max 10MB)
         if file_size > 10 * 1024 * 1024:
-            logger.error(f"File too large: {file_size} bytes")
+            logger.error(f"Data too large: {file_size} bytes")
             return JSONResponse(
                 status_code=400,
-                content={"error": "Audio file too large. Maximum size is 10MB"}
+                content={"error": "Audio data too large. Maximum size is 10MB"}
             )
         
-        # Check if the file is PCM/RAW and convert if necessary
-        if audio.filename.endswith(('.pcm', '.raw')):
-            logger.info("Converting PCM/RAW to LINEAR16 format")
-            try:
-                audio_content = pcm8_to_linear16(audio_content)
-                logger.info("PCM conversion successful")
-            except Exception as e:
-                logger.error(f"Error in PCM conversion: {str(e)}", exc_info=True)
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": f"Failed to convert PCM audio: {str(e)}"}
-                )
+        # Process the audio data
+        try:
+            audio_content = pcm8_to_linear16(audio_content)
+            logger.info("PCM conversion successful")
+        except Exception as e:
+            logger.error(f"Error in PCM conversion: {str(e)}", exc_info=True)
+            return JSONResponse(
+                status_code=400,
+                content={"error": f"Failed to convert PCM audio: {str(e)}"}
+            )
 
         # Convert to base64 for Google STT
         b64_audio = base64.b64encode(audio_content).decode("utf-8")
@@ -135,30 +142,43 @@ async def process_audio(audio: UploadFile = File(...)):
                 content={"error": f"Failed to process speech recognition: {str(e)}"}
             )
 
-        # 2. LLM Response (Groq)
+        # 2. LLM Response (Groq) with context memory
         logger.info("Sending request to Groq LLM")
         try:
+            # Add current user message to conversation history
+            conversation_history.append({"role": "user", "content": user_text})
+
+            # Construct messages with system prompt and last N messages
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are Optimus Prime. "
+                        "You are a smart speaker assistant. "
+                        "Always respond in very short, precise sentences. "
+                        "Be clear, friendly, and to-the-point. "
+                        "Avoid long explanations. Act like a helpful AI."
+                    )
+                }
+            ] + conversation_history[-MAX_HISTORY:]
+
             completion = groq_client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a smart speaker assistant. "
-                            "Always respond in very short, precise sentences. "
-                            "Be clear, friendly, and to-the-point. "
-                            "Avoid long explanations. Act like a helpful AI."
-                        )
-                    },
-                    {
-                        "role": "user",
-                        "content": user_text
-                    }
-                ],
+                messages=messages,
                 model="llama-3.3-70b-versatile",
                 stream=False
             )
             llm_reply = completion.choices[0].message.content
             logger.info(f"Received LLM response: {llm_reply}")
+
+            # Add assistant reply to conversation history
+            conversation_history.append({"role": "assistant", "content": llm_reply})
+
+            # After getting llm_reply
+            if llm_reply.strip().startswith("@tool_call:"):
+                tool_call = llm_reply.strip().split(":", 1)[1].strip()
+                tool_result = execute_tool(tool_call)
+                llm_reply = f"Tool result: {tool_result}"
+
         except Exception as e:
             logger.error(f"Error getting LLM response: {str(e)}", exc_info=True)
             return JSONResponse(
@@ -196,13 +216,16 @@ async def process_audio(audio: UploadFile = File(...)):
                 content={"error": f"Failed to convert text to speech: {str(e)}"}
             )
 
-        return StreamingResponse(
-            iter([pcm8_bytes]),
+        return Response(
+            content=pcm8_bytes,
             media_type="application/octet-stream",
             headers={
                 "Content-Disposition": "attachment; filename=response.raw",
                 "X-User-Text": user_text,
-                "X-LLM-Reply": llm_reply
+                "X-LLM-Reply": llm_reply,
+                "Content-Length": str(len(pcm8_bytes)),
+                "Access-Control-Expose-Headers": "X-LLM-Reply, X-User-Text",
+                "Connection": "close"
             }
         )
 
